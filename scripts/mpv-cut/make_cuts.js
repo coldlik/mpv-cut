@@ -75,51 +75,70 @@ async function ffmpeg(args) {
   child_process.spawnSync(cmd, fullArgs, { stdio: 'inherit' });
 }
 
-async function renderCut(inpath, outpath, start, duration) {
-  const args = [
-    // seek to start before loading file (faster) https://trac.ffmpeg.org/wiki/Seeking#Inputseeking
-    '-ss',
-    start,
-    '-t',
-    duration,
-    '-i',
-    inpath,
-    // don't re-encode
-    '-c',
-    'copy',
-    // shift timestamps so they start at 0
-    '-avoid_negative_ts',
-    'make_zero',
+async function renderCut(inpath, outpath, start, duration, mergeAudioTracks, audioTrackIndex) {
+
+  let args = [
+    '-ss', start,
+    '-t', duration,
+    '-i', inpath,
+    '-map', '0:v:0',
+    '-map', `0:a:${audioTrackIndex - 1}`,
+    '-c', 'copy',
+    '-avoid_negative_ts', 'make_zero',
     outpath,
   ];
 
-  await ffmpeg(args);
+  if (mergeAudioTracks) {
+    args = [
+      '-ss', start,
+      '-t', duration,
+      '-i', inpath,
+      '-filter_complex', `[0:a:0][0:a:1]amerge=inputs=2[a]`,
+      '-map', '0:v',
+      '-map', '[a]',
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-avoid_negative_ts', 'make_zero',
+      outpath,
+    ];
+  }
 
+  await ffmpeg(args);
   await transferTimestamps(inpath, outpath);
 }
 
-async function mergeCuts(tempPath, filepaths, outpath) {
-  // i hate that you have to do a separate command and render each cut separately first, i tried using
-  // filter_complex for merging with multiple inputs but it wouldn't let me. todo: look into this further
-
+async function mergeCuts(tempPath, filepaths, outpath, mergeAudioTracks, audioTrackIndex) {
   const mergeFile = path.join(tempPath, 'merging.txt');
   await fs.promises.writeFile(
     mergeFile,
-    filepaths.map((path) => `file '${ffmpegEscapeFilepath(path)}`).join('\n')
+    filepaths.map((path) => `file '${ffmpegEscapeFilepath(path)}'`).join('\n')
   );
 
-  await ffmpeg([
-    '-f',
-    'concat',
-    '-safe',
-    0,
-    '-i',
-    mergeFile,
-    '-c',
-    'copy',
+  let args = [
+    '-f', 'concat',
+    '-safe', 0,
+    '-i', mergeFile,
+    '-map', '0:v:0',
+    '-map', `0:a:${audioTrackIndex - 1}`,
+    '-c', 'copy',
     outpath,
-  ]);
+  ];
 
+  if (mergeAudioTracks) {
+    args = [
+      '-f', 'concat',
+      '-safe', 0,
+      '-i', mergeFile,
+      '-filter_complex', `[0:a:${audioTrackIndex - 1}]amerge=inputs=1[a]`,
+      '-map', '0:v',
+      '-map', '[a]',
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      outpath,
+    ];
+  }
+
+  await ffmpeg(args);
   await fs.promises.unlink(mergeFile);
 
   for (const path of filepaths) {
@@ -139,8 +158,6 @@ async function main() {
 
   if (!isDir(outdir)) {
     if (!isSubdirectory(indir, outdir)) quit('Output directory is invalid');
-
-    // the output directory is a child of the input directory, can assume it's safe to create
     await fs.promises.mkdir(outdir, { recursive: true });
   }
 
@@ -148,7 +165,6 @@ async function main() {
   const cuts = Object.values(cutsMap).sort((a, b) => a.start - b.start);
 
   const { name: filename_noext, ext: ext } = path.parse(filename);
-
   const outpaths = [];
 
   for (const [i, cut] of cuts.entries()) {
@@ -176,7 +192,7 @@ async function main() {
     );
     console.log('' + outpath + '\n');
 
-    await renderCut(inpath, outpath, cut.start, duration);
+    await renderCut(inpath, outpath, cut.start, duration, options.merge_audio_tracks, options.audio_track_index);
     outpaths.push(outpath);
   }
 
@@ -184,7 +200,7 @@ async function main() {
     const cutName = `(${outpaths.length} merged cuts) ` + filename;
     const outpath = path.join(outdir, cutName);
 
-    await mergeCuts(indir, outpaths, outpath);
+    await mergeCuts(indir, outpaths, outpath, options.merge_audio_tracks, options.audio_track_index);
   }
 
   return console.log('Done.\n');

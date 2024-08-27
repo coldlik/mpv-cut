@@ -51,6 +51,9 @@ Note: mpv-cut should have its own folder inside your scripts folder. (`scripts/m
 
 - <kbd>g</kbd> and <kbd>h</kbd> to set the start and end points of a cut (will use your current position).
 - <kbd>G</kbd> and <kbd>H</kbd> will do the same, but will place the points at the very start or end of the video.
+- <kbd>q</kbd> to listen to both audio tracks at once.
+- <kbd>a</kbd> to switch between audio tracks to render.
+- <kbd>A</kbd> to merge audio tracks to render.
 - <kbd>r</kbd> to render cuts.
 
 If you want to change the start or end position of a cut you can press the keybind again. You can also create multiple cuts from a single video.
